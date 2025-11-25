@@ -732,6 +732,12 @@ classdef DataAcquisition < handle
                 xMaxForSplit = obj.fig_cache.xmax;
             end
 
+            % Match split-plot colors to the channel toggle buttons
+            colorOrder = get(groot,'defaultaxescolororder');
+            if size(colorOrder, 1) < 8
+                colorOrder = repmat(colorOrder, ceil(8/size(colorOrder,1)), 1);
+            end
+
             for idx = 1:nAxes
                 ax = axes('Parent', obj.panel, 'GridLineStyle','-', ...
                     'XColor', 0.15*[1 1 1],'YColor', 0.15*[1 1 1]);
@@ -748,6 +754,14 @@ classdef DataAcquisition < handle
 
                 chAlpha = obj.alpha(visibleChannels(idx));
                 chCache = figure_cache(ax, chAlpha, xMaxForSplit);
+                chBut = obj.chbuts(visibleChannels(idx));
+                chData = get(chBut, 'UserData');
+                if ~isempty(chData) && isfield(chData, 'isDifferential') && chData.isDifferential
+                    chColor = chData.diffColor;
+                else
+                    chColor = colorOrder(visibleChannels(idx), :);
+                end
+                chCache.cmap = chColor;
                 chCache.channelVisible = true(1,1);
                 obj.subplotCaches{idx} = chCache;
 
@@ -3512,6 +3526,11 @@ classdef DataAcquisition < handle
             % Refresh split view layout and caches when active
             if obj.splitMode
                 obj.createSplitAxes();
+            end
+
+            % Ensure layout stays consistent when channels change while split is active
+            if strcmp(obj.mode, 'normal')
+                obj.normalResizeFcn();
             end
         end
         
