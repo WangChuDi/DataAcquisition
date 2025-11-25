@@ -82,11 +82,19 @@ classdef DataAcquisition < handle
         tbuts       % Handles for the main control buttons
         ybuts       % Handles for the y axis buttons
         xbuts       % Handles for the x axis buttons
+        splitButton % Handle for the split view toggle button
         chbuts      % Handles for the channel toggle buttons
         channelVisible  % Array to track which channels are visible
         outputFreq  % Frequency of analog output signal
         audio       % Matlab audio player object
         data_compression_scaling    % compression to int16
+
+        % Split view handling
+        splitMode = false           % Whether split view is enabled
+        subplotAxes = gobjects(1,0) % Handles for split axes
+        subplotCaches = {}          % figure_cache objects for split axes
+        splitYButtons = {}          % Y-axis button handles for split axes
+        splitXButtons = {}          % X-axis button handles for split axes
     end
 
     methods (Hidden=true)
@@ -447,6 +455,13 @@ classdef DataAcquisition < handle
             obj.normalSizing;
             obj.normalResizeFcn;
 
+            % Reset split view controls for normal mode
+            obj.splitMode = false;
+            obj.clearSplitView();
+            if ~isempty(obj.splitButton) && isvalid(obj.splitButton)
+                set(obj.splitButton, 'Value', 0);
+            end
+
             % Initialize figure cache with all 8 channels
             obj.fig_cache = figure_cache(obj.axes, obj.alpha, 5);
             
@@ -502,6 +517,11 @@ classdef DataAcquisition < handle
                 'callback', @(~,~) obj.fig_cache.zoom_x('out'));
             obj.xbuts(2) = uicontrol('Parent', obj.panel, 'String', zoomInLabel,...
                 'callback', @(~,~) obj.fig_cache.zoom_x('in'));
+
+            % split view toggle
+            obj.splitButton = uicontrol('Parent', obj.panel, 'Style', 'togglebutton', ...
+                'String', 'Split', 'FontWeight', 'bold', ...
+                'callback', @(src,~) obj.toggleSplitView(src));
 
             % top
             obj.tbuts = [];
@@ -609,6 +629,12 @@ classdef DataAcquisition < handle
         end
 
         function normalResizeFcn(obj)
+            % Switch layout depending on split view state
+            if obj.splitMode
+                obj.layoutSplitAxes();
+                return;
+            end
+
             % get size of panel in pixels
             sz = obj.getPixelPos(obj.panel);
             % position the axes object
@@ -639,6 +665,12 @@ classdef DataAcquisition < handle
                     obj.DEFS.BUTTONSIZE, ...
                     obj.DEFS.BUTTONSIZE]));
             end
+            % position the split toggle button to the right of x-buttons
+            if ~isempty(obj.splitButton) && isvalid(obj.splitButton)
+                set(obj.splitButton, 'Position', ...
+                    max(1,[midle + (numel(obj.xbuts)/2+0.5)*obj.DEFS.BUTTONSIZE, ...
+                    obj.DEFS.PADDING, obj.DEFS.BIGBUTTONSIZE, obj.DEFS.BUTTONSIZE]));
+            end
             % position the channel toggle buttons (above x-axis buttons)
             if ~isempty(obj.chbuts)
                 for i=1:numel(obj.chbuts)
@@ -655,6 +687,263 @@ classdef DataAcquisition < handle
                     sz(2) + sz(4) + obj.DEFS.PADDING, ...
                     obj.DEFS.BIGBUTTONSIZE, ...
                     obj.DEFS.BIGBUTTONSIZE]));
+            end
+        end
+
+        function toggleSplitView(obj, src)
+            obj.splitMode = logical(get(src, 'Value'));
+
+            if obj.splitMode
+                obj.createSplitAxes();
+
+                % Hide the main axis controls when split view is active
+                if obj.splitMode
+                    obj.setMainAxisButtonsVisible('off');
+                else
+                    obj.setMainAxisButtonsVisible('on');
+                end
+            else
+                obj.setMainAxisButtonsVisible('on');
+                obj.clearSplitView();
+                if isgraphics(obj.axes)
+                    obj.axes.Visible = 'on';
+                end
+                if ~isempty(obj.fig_cache)
+                    obj.fig_cache.clear_fig();
+                    obj.fig_cache.draw_fig_now();
+                end
+            end
+
+            obj.normalResizeFcn();
+        end
+
+        function createSplitAxes(obj)
+            obj.clearSplitView();
+
+            visibleChannels = find(obj.channelVisible);
+            if isempty(visibleChannels)
+                obj.splitMode = false;
+                if ~isempty(obj.splitButton) && isvalid(obj.splitButton)
+                    set(obj.splitButton, 'Value', 0);
+                end
+                return;
+            end
+
+            nAxes = numel(visibleChannels);
+            obj.subplotAxes = gobjects(1, nAxes);
+            obj.subplotCaches = cell(1, nAxes);
+            obj.splitYButtons = cell(1, nAxes);
+            obj.splitXButtons = cell(1, nAxes);
+
+            xMaxForSplit = 5;
+            if ~isempty(obj.fig_cache)
+                xMaxForSplit = obj.fig_cache.xmax;
+            end
+
+            % Match split-plot colors to the channel toggle buttons
+            colorOrder = get(groot,'defaultaxescolororder');
+            if size(colorOrder, 1) < 8
+                colorOrder = repmat(colorOrder, ceil(8/size(colorOrder,1)), 1);
+            end
+
+            for idx = 1:nAxes
+                ax = axes('Parent', obj.panel, 'GridLineStyle','-', ...
+                    'XColor', 0.15*[1 1 1],'YColor', 0.15*[1 1 1]);
+                set(ax,'NextPlot','add','XLimMode','manual');
+                set(ax,'XGrid','on','YGrid','on','Tag','Axes','Box','on');
+                ax.XLabel.String = 'Time (s)';
+                ax.XLabel.Color = 'k';
+                ax.YLabel.String = sprintf('CH%d', visibleChannels(idx)-1);
+                ax.YLabel.Color = 'k';
+                ax.XLim = obj.axes.XLim;
+                ax.YLim = obj.axes.YLim;
+
+                obj.subplotAxes(idx) = ax;
+
+                chAlpha = obj.alpha(visibleChannels(idx));
+                chCache = figure_cache(ax, chAlpha, xMaxForSplit);
+                chBut = obj.chbuts(visibleChannels(idx));
+                chData = get(chBut, 'UserData');
+                if ~isempty(chData) && isfield(chData, 'isDifferential') && chData.isDifferential
+                    chColor = chData.diffColor;
+                else
+                    chColor = colorOrder(visibleChannels(idx), :);
+                end
+                chCache.cmap = chColor;
+                chCache.channelVisible = true(1,1);
+                obj.subplotCaches{idx} = chCache;
+
+                [obj.splitYButtons{idx}, obj.splitXButtons{idx}] = obj.createAxisButtons(chCache);
+            end
+
+            if isgraphics(obj.axes)
+                obj.axes.Visible = 'off';
+            end
+
+            obj.layoutSplitAxes();
+        end
+
+        function [ybuts, xbuts] = createAxisButtons(obj, cache)
+            % Use plain-text labels instead of HTML for MATLAB UI compatibility
+            zoomOutLabel = '-';
+            scrollDownLabel = char(8595); % down arrow
+            resetLabel = 'R';
+            scrollUpLabel = char(8593);   % up arrow
+            zoomInLabel = '+';
+
+            ybuts = [];
+            ybuts(1) = uicontrol('Parent', obj.panel, 'String', zoomOutLabel,...
+                'callback', @(~,~) cache.zoom_y('out'));
+            ybuts(2) = uicontrol('Parent', obj.panel, 'String', scrollDownLabel,...
+                'callback', @(~,~) cache.scroll_y('down'));
+            ybuts(3) = uicontrol('Parent', obj.panel, 'String', resetLabel,...
+                'callback', @(~,~) cache.reset_fig);
+            ybuts(4) = uicontrol('Parent', obj.panel, 'String', scrollUpLabel,...
+                'callback', @(~,~) cache.scroll_y('up'));
+            ybuts(5) = uicontrol('Parent', obj.panel, 'String', zoomInLabel,...
+                'callback', @(~,~) cache.zoom_y('in'));
+
+            xbuts = [];
+            xbuts(1) = uicontrol('Parent', obj.panel, 'String', zoomOutLabel,...
+                'callback', @(~,~) cache.zoom_x('out'));
+            xbuts(2) = uicontrol('Parent', obj.panel, 'String', zoomInLabel,...
+                'callback', @(~,~) cache.zoom_x('in'));
+        end
+
+        function layoutSplitAxes(obj)
+            if isempty(obj.subplotAxes) || ~all(isgraphics(obj.subplotAxes))
+                return;
+            end
+
+            % Base layout numbers similar to normal view
+            panelPos = obj.getPixelPos(obj.panel);
+            left = obj.DEFS.PADDING + obj.DEFS.LABELWIDTH + obj.DEFS.BUTTONSIZE;
+            width = panelPos(3) - left;
+            bottomBase = obj.DEFS.PADDING + obj.DEFS.LABELWIDTH + obj.DEFS.BUTTONSIZE;
+            heightAvail = panelPos(4) - bottomBase - obj.DEFS.BIGBUTTONSIZE - 3*obj.DEFS.PADDING;
+
+            nAxes = numel(obj.subplotAxes);
+            segmentHeight = heightAvail / nAxes;
+
+            for idx = 1:nAxes
+                if ~isgraphics(obj.subplotAxes(idx))
+                    continue;
+                end
+                segmentBottom = bottomBase + (nAxes - idx) * segmentHeight;
+                axHeight = max(1, segmentHeight - obj.DEFS.BUTTONSIZE - obj.DEFS.PADDING);
+                axPos = [left, segmentBottom + obj.DEFS.BUTTONSIZE, ...
+                    width - obj.DEFS.BUTTONSIZE, axHeight];
+
+                set(obj.subplotAxes(idx), 'Position', max(1, axPos), 'Units', 'Pixels');
+
+                % y buttons aligned to axis center
+                midY = axPos(2) + axPos(4)/2;
+                ybuts = obj.splitYButtons{idx};
+                for j = 1:numel(ybuts)
+                    if isgraphics(ybuts(j))
+                        set(ybuts(j), 'Position', max(1, [obj.DEFS.PADDING, ...
+                            midY + (j-numel(ybuts)/2-1)*obj.DEFS.BUTTONSIZE, ...
+                            obj.DEFS.BUTTONSIZE, obj.DEFS.BUTTONSIZE]));
+                    end
+                end
+
+                % x buttons below each axis
+                midX = axPos(1) + axPos(3)/2;
+                xbuts = obj.splitXButtons{idx};
+                for j = 1:numel(xbuts)
+                    if isgraphics(xbuts(j))
+                        set(xbuts(j), 'Position', max(1, [midX + (j-numel(xbuts)/2-1)*obj.DEFS.BUTTONSIZE, ...
+                            segmentBottom, obj.DEFS.BUTTONSIZE, obj.DEFS.BUTTONSIZE]));
+                    end
+                end
+            end
+
+            % Position shared controls using the middle of the stack
+            midXAll = left + width/2;
+            topAxisTop = bottomBase + heightAvail;
+
+            if ~isempty(obj.splitButton) && isvalid(obj.splitButton)
+                set(obj.splitButton, 'Position', max(1, [midXAll + obj.DEFS.BIGBUTTONSIZE, ...
+                    obj.DEFS.PADDING, obj.DEFS.BIGBUTTONSIZE, obj.DEFS.BUTTONSIZE]));
+            end
+
+            if ~isempty(obj.chbuts)
+                for i = 1:numel(obj.chbuts)
+                    set(obj.chbuts(i),'Position', ...
+                        max(1,[midXAll - (numel(obj.chbuts)/2 - i + 0.5)*obj.DEFS.BIGBUTTONSIZE, ...
+                        obj.DEFS.PADDING + obj.DEFS.BUTTONSIZE + obj.DEFS.PADDING, ...
+                        obj.DEFS.BIGBUTTONSIZE, ...
+                        obj.DEFS.BUTTONSIZE]));
+                end
+            end
+
+            for i=1:numel(obj.tbuts)
+                set(obj.tbuts(i),'Position', ...
+                    max(1,[midXAll+(i-numel(obj.tbuts)/2-1)*obj.DEFS.BIGBUTTONSIZE, ...
+                    topAxisTop + obj.DEFS.PADDING, ...
+                    obj.DEFS.BIGBUTTONSIZE, ...
+                    obj.DEFS.BIGBUTTONSIZE]));
+            end
+        end
+
+        function clearSplitView(obj)
+            % Delete split axes and controls
+            if ~isempty(obj.subplotAxes)
+                delete(obj.subplotAxes(isgraphics(obj.subplotAxes)));
+            end
+            for idx = 1:numel(obj.splitYButtons)
+                delete(obj.splitYButtons{idx}(isgraphics(obj.splitYButtons{idx})));
+            end
+            for idx = 1:numel(obj.splitXButtons)
+                delete(obj.splitXButtons{idx}(isgraphics(obj.splitXButtons{idx})));
+            end
+
+            obj.subplotAxes = gobjects(1,0);
+            obj.subplotCaches = {};
+            obj.splitYButtons = {};
+            obj.splitXButtons = {};
+        end
+
+        function setMainAxisButtonsVisible(obj, visibility)
+            if nargin < 2
+                visibility = 'on';
+            end
+
+            if ~isempty(obj.ybuts)
+                for i = 1:numel(obj.ybuts)
+                    if isgraphics(obj.ybuts(i))
+                        set(obj.ybuts(i), 'Visible', visibility);
+                    end
+                end
+            end
+
+            if ~isempty(obj.xbuts)
+                for i = 1:numel(obj.xbuts)
+                    if isgraphics(obj.xbuts(i))
+                        set(obj.xbuts(i), 'Visible', visibility);
+                    end
+                end
+            end
+        end
+
+        function updateSplitCaches(obj, processedData)
+            if ~obj.splitMode || isempty(obj.subplotCaches)
+                return;
+            end
+
+            visibleChannels = find(obj.channelVisible);
+            for idx = 1:numel(obj.subplotCaches)
+                cache = obj.subplotCaches{idx};
+                if isempty(cache) || ~isgraphics(cache.ax)
+                    continue;
+                end
+
+                channelIdx = visibleChannels(idx);
+                if channelIdx <= size(processedData, 2) - 1
+                    channelData = processedData(:, [1, channelIdx + 1]);
+                    cache.update_cache(channelData);
+                    cache.draw_fig_now();
+                end
             end
         end
 
@@ -2477,6 +2766,7 @@ classdef DataAcquisition < handle
             processedData = obj.processDifferentialData(dataWithTime);
             obj.fig_cache.update_cache(processedData);
             obj.fig_cache.draw_fig_now();
+            obj.updateSplitCaches(processedData);
         end
 
         function showDataAndRecord(obj, evt, fid)
@@ -2492,6 +2782,7 @@ classdef DataAcquisition < handle
             % Update display
             obj.fig_cache.update_cache(processedData);
             obj.fig_cache.draw_fig_now();
+            obj.updateSplitCaches(processedData);
         end
 
         function startNoiseDisplay(obj, button)
@@ -3260,6 +3551,16 @@ classdef DataAcquisition < handle
                         set(obj.chbuts(i), 'String', sprintf('CH%d', channelNum));
                     end
                 end
+            end
+
+            % Refresh split view layout and caches when active
+            if obj.splitMode
+                obj.createSplitAxes();
+            end
+
+            % Ensure layout stays consistent when channels change while split is active
+            if strcmp(obj.mode, 'normal')
+                obj.normalResizeFcn();
             end
         end
         
