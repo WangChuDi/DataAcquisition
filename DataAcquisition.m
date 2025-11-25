@@ -95,6 +95,9 @@ classdef DataAcquisition < handle
         subplotCaches = {}          % figure_cache objects for split axes
         splitYButtons = {}          % Y-axis button handles for split axes
         splitXButtons = {}          % X-axis button handles for split axes
+
+        % Cached main-axis styling
+        mainAxesColor = []
     end
 
     methods (Hidden=true)
@@ -694,9 +697,29 @@ classdef DataAcquisition < handle
             obj.splitMode = logical(get(src, 'Value'));
 
             if obj.splitMode
+                % Hide main-axis controls so only split controls are visible
+                obj.setMainAxisControlsVisible('off');
+                obj.setMainAxesVisible('off');
+                obj.blankMainAxesForSplit();
+
                 obj.createSplitAxes();
+
+                % If split creation failed (e.g., no visible channels), restore controls
+                if ~obj.splitMode
+                    obj.setMainAxisControlsVisible('on');
+                    obj.setMainAxesVisible('on');
+                    obj.restoreMainAxesColor();
+                    if ~isempty(obj.fig_cache)
+                        obj.fig_cache.draw_fig_now();
+                    end
+                end
             else
                 obj.clearSplitView();
+
+                obj.setMainAxisControlsVisible('on');
+                obj.setMainAxesVisible('on');
+                obj.restoreMainAxesColor();
+
                 if isgraphics(obj.axes)
                     obj.axes.Visible = 'on';
                 end
@@ -707,6 +730,26 @@ classdef DataAcquisition < handle
             end
 
             obj.normalResizeFcn();
+        end
+
+        function blankMainAxesForSplit(obj)
+            if isgraphics(obj.axes)
+                if isempty(obj.mainAxesColor)
+                    obj.mainAxesColor = get(obj.axes, 'Color');
+                end
+
+                if isgraphics(obj.panel)
+                    set(obj.axes, 'Color', get(obj.panel, 'BackgroundColor'));
+                end
+
+                cla(obj.axes);
+            end
+        end
+
+        function restoreMainAxesColor(obj)
+            if isgraphics(obj.axes) && ~isempty(obj.mainAxesColor)
+                set(obj.axes, 'Color', obj.mainAxesColor);
+            end
         end
 
         function createSplitAxes(obj)
@@ -894,6 +937,45 @@ classdef DataAcquisition < handle
             obj.subplotCaches = {};
             obj.splitYButtons = {};
             obj.splitXButtons = {};
+        end
+
+        function setMainAxisControlsVisible(obj, visibility)
+            if nargin < 2
+                visibility = 'on';
+            end
+
+            if ~isempty(obj.ybuts)
+                for i = 1:numel(obj.ybuts)
+                    if isgraphics(obj.ybuts(i))
+                        set(obj.ybuts(i), 'Visible', visibility);
+                    end
+                end
+            end
+
+            if ~isempty(obj.xbuts)
+                for i = 1:numel(obj.xbuts)
+                    if isgraphics(obj.xbuts(i))
+                        set(obj.xbuts(i), 'Visible', visibility);
+                    end
+                end
+            end
+        end
+
+        function setMainAxesVisible(obj, visibility)
+            if nargin < 2
+                visibility = 'on';
+            end
+
+            if isgraphics(obj.axes)
+                set(obj.axes, 'Visible', visibility);
+
+                children = get(obj.axes, 'Children');
+                for child = reshape(children, 1, [])
+                    if isgraphics(child)
+                        set(child, 'Visible', visibility);
+                    end
+                end
+            end
         end
 
         function updateSplitCaches(obj, processedData)
@@ -2735,7 +2817,9 @@ classdef DataAcquisition < handle
             dataWithTime = [evt.TimeStamps, evt.Data];
             processedData = obj.processDifferentialData(dataWithTime);
             obj.fig_cache.update_cache(processedData);
-            obj.fig_cache.draw_fig_now();
+            if ~obj.splitMode
+                obj.fig_cache.draw_fig_now();
+            end
             obj.updateSplitCaches(processedData);
         end
 
@@ -2748,10 +2832,12 @@ classdef DataAcquisition < handle
             % processedData columns: [time, ch0, ch1, ..., ch7]
             data = (repmat(obj.alpha,size(processedData,1),1) .* processedData(:,2:end))';
             obj.writeFileData(fid, data);
-            
+
             % Update display
             obj.fig_cache.update_cache(processedData);
-            obj.fig_cache.draw_fig_now();
+            if ~obj.splitMode
+                obj.fig_cache.draw_fig_now();
+            end
             obj.updateSplitCaches(processedData);
         end
 
