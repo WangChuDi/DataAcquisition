@@ -1,0 +1,329 @@
+diff --git a/DataAcquisition.m b/DataAcquisition.m
+index a1d0f25c1546e8a0ebf71415d9226c592a452080..c6246f97990ca5aaf51ff2973a163c72460309e5 100644
+--- a/DataAcquisition.m
++++ b/DataAcquisition.m
+@@ -73,50 +73,53 @@ classdef DataAcquisition < handle
+     end
+ 
+     properties (Hidden=true)
+         panel       % Handle for main display panel
+         axes        % Handle for the main axes
+         fig_cache   % Handle for cache object that handles live data
+         DEFS        % UI definitions (widths etc.)
+         tabs        % Main window tabs handle struct
+         hcmenu      % Handle to context menu
+         tbuts       % Handles for the main control buttons
+         ybuts       % Handles for the y axis buttons
+         xbuts       % Handles for the x axis buttons
+         splitButton % Handle for the split view toggle button
+         chbuts      % Handles for the channel toggle buttons
+         channelVisible  % Array to track which channels are visible
+         outputFreq  % Frequency of analog output signal
+         audio       % Matlab audio player object
+         data_compression_scaling    % compression to int16
+ 
+         % Split view handling
+         splitMode = false           % Whether split view is enabled
+         subplotAxes = gobjects(1,0) % Handles for split axes
+         subplotCaches = {}          % figure_cache objects for split axes
+         splitYButtons = {}          % Y-axis button handles for split axes
+         splitXButtons = {}          % X-axis button handles for split axes
++
++        % Cached main-axis styling
++        mainAxesColor = []
+     end
+ 
+     methods (Hidden=true)
+ 
+         function obj = DataAcquisition(varargin)
+             % Constructor
+ 
+             % Handle inputs
+             inputs = obj.parseInputs(varargin);
+             obj.channels = inputs.Channels;
+             inputAlphas = inputs.Alphas;
+             obj.sampling = inputs.SampleFrequency;
+             obj.outputAlpha = inputs.OutputAlpha;
+             
+             % Initialize all 8 channels and their states
+             obj.allChannels = 0:7;
+             obj.channelEnabled = false(1, 8);
+             obj.channelEnabled(obj.channels + 1) = true; % +1 for 1-based indexing
+             
+             % Always use all 8 channels for DAQ, configure display based on enabled channels
+             obj.channels = 0:7;  % Always acquire all 8 channels
+             
+             % Expand alpha to 8 elements (use first alpha value for unspecified channels)
+             obj.alpha = ones(1, 8) * inputAlphas(1);
+             for i = 1:numel(inputAlphas)
+@@ -672,65 +675,105 @@ classdef DataAcquisition < handle
+                     obj.DEFS.PADDING, obj.DEFS.BIGBUTTONSIZE, obj.DEFS.BUTTONSIZE]));
+             end
+             % position the channel toggle buttons (above x-axis buttons)
+             if ~isempty(obj.chbuts)
+                 for i=1:numel(obj.chbuts)
+                     set(obj.chbuts(i),'Position', ...
+                         max(1,[midle - (numel(obj.chbuts)/2 - i + 0.5)*obj.DEFS.BIGBUTTONSIZE, ...
+                         obj.DEFS.PADDING + obj.DEFS.BUTTONSIZE + obj.DEFS.PADDING, ...
+                         obj.DEFS.BIGBUTTONSIZE, ...
+                         obj.DEFS.BUTTONSIZE]));
+                 end
+             end
+             for i=1:numel(obj.tbuts)
+                 set(obj.tbuts(i),'Position', ...
+                     max(1,[midle+(i-numel(obj.tbuts)/2-1)*obj.DEFS.BIGBUTTONSIZE, ...
+                     sz(2) + sz(4) + obj.DEFS.PADDING, ...
+                     obj.DEFS.BIGBUTTONSIZE, ...
+                     obj.DEFS.BIGBUTTONSIZE]));
+             end
+         end
+ 
+         function toggleSplitView(obj, src)
+             obj.splitMode = logical(get(src, 'Value'));
+ 
+             if obj.splitMode
++                % Hide main-axis controls so only split controls are visible
++                obj.setMainAxisControlsVisible('off');
++                obj.setMainAxesVisible('off');
++                obj.blankMainAxesForSplit();
++
+                 obj.createSplitAxes();
++
++                % If split creation failed (e.g., no visible channels), restore controls
++                if ~obj.splitMode
++                    obj.setMainAxisControlsVisible('on');
++                    obj.setMainAxesVisible('on');
++                    obj.restoreMainAxesColor();
++                    if ~isempty(obj.fig_cache)
++                        obj.fig_cache.draw_fig_now();
++                    end
++                end
+             else
+                 obj.clearSplitView();
++
++                obj.setMainAxisControlsVisible('on');
++                obj.setMainAxesVisible('on');
++                obj.restoreMainAxesColor();
++
+                 if isgraphics(obj.axes)
+                     obj.axes.Visible = 'on';
+                 end
+                 if ~isempty(obj.fig_cache)
+                     obj.fig_cache.clear_fig();
+                     obj.fig_cache.draw_fig_now();
+                 end
+             end
+ 
+             obj.normalResizeFcn();
+         end
+ 
++        function blankMainAxesForSplit(obj)
++            if isgraphics(obj.axes)
++                if isempty(obj.mainAxesColor)
++                    obj.mainAxesColor = get(obj.axes, 'Color');
++                end
++
++                if isgraphics(obj.panel)
++                    set(obj.axes, 'Color', get(obj.panel, 'BackgroundColor'));
++                end
++
++                cla(obj.axes);
++            end
++        end
++
++        function restoreMainAxesColor(obj)
++            if isgraphics(obj.axes) && ~isempty(obj.mainAxesColor)
++                set(obj.axes, 'Color', obj.mainAxesColor);
++            end
++        end
++
+         function createSplitAxes(obj)
+             obj.clearSplitView();
+ 
+             visibleChannels = find(obj.channelVisible);
+             if isempty(visibleChannels)
+                 obj.splitMode = false;
+                 if ~isempty(obj.splitButton) && isvalid(obj.splitButton)
+                     set(obj.splitButton, 'Value', 0);
+                 end
+                 return;
+             end
+ 
+             nAxes = numel(visibleChannels);
+             obj.subplotAxes = gobjects(1, nAxes);
+             obj.subplotCaches = cell(1, nAxes);
+             obj.splitYButtons = cell(1, nAxes);
+             obj.splitXButtons = cell(1, nAxes);
+ 
+             xMaxForSplit = 5;
+             if ~isempty(obj.fig_cache)
+                 xMaxForSplit = obj.fig_cache.xmax;
+             end
+ 
+             % Match split-plot colors to the channel toggle buttons
+             colorOrder = get(groot,'defaultaxescolororder');
+@@ -874,50 +917,89 @@ classdef DataAcquisition < handle
+                     max(1,[midXAll+(i-numel(obj.tbuts)/2-1)*obj.DEFS.BIGBUTTONSIZE, ...
+                     topAxisTop + obj.DEFS.PADDING, ...
+                     obj.DEFS.BIGBUTTONSIZE, ...
+                     obj.DEFS.BIGBUTTONSIZE]));
+             end
+         end
+ 
+         function clearSplitView(obj)
+             % Delete split axes and controls
+             if ~isempty(obj.subplotAxes)
+                 delete(obj.subplotAxes(isgraphics(obj.subplotAxes)));
+             end
+             for idx = 1:numel(obj.splitYButtons)
+                 delete(obj.splitYButtons{idx}(isgraphics(obj.splitYButtons{idx})));
+             end
+             for idx = 1:numel(obj.splitXButtons)
+                 delete(obj.splitXButtons{idx}(isgraphics(obj.splitXButtons{idx})));
+             end
+ 
+             obj.subplotAxes = gobjects(1,0);
+             obj.subplotCaches = {};
+             obj.splitYButtons = {};
+             obj.splitXButtons = {};
+         end
+ 
++        function setMainAxisControlsVisible(obj, visibility)
++            if nargin < 2
++                visibility = 'on';
++            end
++
++            if ~isempty(obj.ybuts)
++                for i = 1:numel(obj.ybuts)
++                    if isgraphics(obj.ybuts(i))
++                        set(obj.ybuts(i), 'Visible', visibility);
++                    end
++                end
++            end
++
++            if ~isempty(obj.xbuts)
++                for i = 1:numel(obj.xbuts)
++                    if isgraphics(obj.xbuts(i))
++                        set(obj.xbuts(i), 'Visible', visibility);
++                    end
++                end
++            end
++        end
++
++        function setMainAxesVisible(obj, visibility)
++            if nargin < 2
++                visibility = 'on';
++            end
++
++            if isgraphics(obj.axes)
++                set(obj.axes, 'Visible', visibility);
++
++                children = get(obj.axes, 'Children');
++                for child = reshape(children, 1, [])
++                    if isgraphics(child)
++                        set(child, 'Visible', visibility);
++                    end
++                end
++            end
++        end
++
+         function updateSplitCaches(obj, processedData)
+             if ~obj.splitMode || isempty(obj.subplotCaches)
+                 return;
+             end
+ 
+             visibleChannels = find(obj.channelVisible);
+             for idx = 1:numel(obj.subplotCaches)
+                 cache = obj.subplotCaches{idx};
+                 if isempty(cache) || ~isgraphics(cache.ax)
+                     continue;
+                 end
+ 
+                 channelIdx = visibleChannels(idx);
+                 if channelIdx <= size(processedData, 2) - 1
+                     channelData = processedData(:, [1, channelIdx + 1]);
+                     cache.update_cache(channelData);
+                     cache.draw_fig_now();
+                 end
+             end
+         end
+ 
+         function noiseMode(obj)
+             % stop other things that might have been running
+             obj.stopAll;
+             obj.mode = 'noise';
+@@ -2713,67 +2795,71 @@ classdef DataAcquisition < handle
+                     lowDataCol = lowIdx + 1;
+                     highDataCol = highIdx + 1;
+                     
+                     % Replace low channel with differential signal
+                     processedData(:, lowDataCol) = rawData(:, lowDataCol) - rawData(:, highDataCol);
+                     % Zero out high channel (will not be saved)
+                     processedData(:, highDataCol) = 0;
+                     
+                     % Update save flags: save low channel, don't save high channel
+                     obj.saveChannelFlags(lowIdx) = true;   % Save differential result
+                     obj.saveChannelFlags(highIdx) = false; % Don't save high channel
+                     
+                     processedChannels(lowIdx) = true;
+                     processedChannels(highIdx) = true;
+                     
+                     fprintf('Differential signal computed: CH%d - CH%d -> CH%d\n', lowIdx-1, highIdx-1, lowIdx-1);
+                 end
+             end
+         end
+         
+         function showData(obj, evt)
+             % Process differential mode before display
+             dataWithTime = [evt.TimeStamps, evt.Data];
+             processedData = obj.processDifferentialData(dataWithTime);
+             obj.fig_cache.update_cache(processedData);
+-            obj.fig_cache.draw_fig_now();
++            if ~obj.splitMode
++                obj.fig_cache.draw_fig_now();
++            end
+             obj.updateSplitCaches(processedData);
+         end
+ 
+         function showDataAndRecord(obj, evt, fid)
+             % Process differential mode before recording and display
+             dataWithTime = [evt.TimeStamps, evt.Data];
+             processedData = obj.processDifferentialData(dataWithTime);
+             
+             % Scale and write to file (only enabled channels)
+             % processedData columns: [time, ch0, ch1, ..., ch7]
+             data = (repmat(obj.alpha,size(processedData,1),1) .* processedData(:,2:end))';
+             obj.writeFileData(fid, data);
+-            
++
+             % Update display
+             obj.fig_cache.update_cache(processedData);
+-            obj.fig_cache.draw_fig_now();
++            if ~obj.splitMode
++                obj.fig_cache.draw_fig_now();
++            end
+             obj.updateSplitCaches(processedData);
+         end
+ 
+         function startNoiseDisplay(obj, button)
+             % Sample chunks of data, calculate noise, and display it
+             try
+                 set(button,'CData',imread('Pause.png'));
+                 set(button,'Value',1);
+                 set(button,'String','');
+             catch ex
+                 set(button,'String','Pause');
+             end
+             try
+                 % add listener for data
+                 obj.DAQ.s.NotifyWhenDataAvailableExceeds = 2^16;
+                 obj.DAQ.listeners.noise = addlistener(obj.DAQ.s, 'DataAvailable', ...
+                     @(~,event) obj.plotNoise(event));
+                 % start DAQ session
+                 obj.DAQ.s.startBackground;
+ 
+             catch ex
+ 
+             end
+         end
+ 

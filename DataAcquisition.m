@@ -878,18 +878,23 @@ classdef DataAcquisition < handle
                 segmentBottom = bottomBase + (nRows - rowIdx) * (segmentHeight + obj.DEFS.PADDING);
                 colLeft = left + (colIdx - 1) * (segmentWidth + obj.DEFS.PADDING);
 
-                axHeight = max(1, segmentHeight - obj.DEFS.BUTTONSIZE - obj.DEFS.PADDING);
-                axPos = [colLeft + obj.DEFS.BUTTONSIZE, segmentBottom + obj.DEFS.BUTTONSIZE, ...
-                    segmentWidth - obj.DEFS.BUTTONSIZE, axHeight];
+                gap = 15 * obj.DEFS.PADDING;
+                axLeft = colLeft + obj.DEFS.BUTTONSIZE + gap;
+                axBottom = segmentBottom + obj.DEFS.BUTTONSIZE + gap;
+                axWidth = max(1, segmentWidth - obj.DEFS.BUTTONSIZE - 2 * gap);
+                axHeight = max(1, segmentHeight - obj.DEFS.BUTTONSIZE - 2 * gap);
+                axPos = [axLeft, axBottom, axWidth, axHeight];
 
                 set(obj.subplotAxes(idx), 'Position', max(1, axPos), 'Units', 'Pixels');
 
                 % y buttons aligned to axis center
                 midY = axPos(2) + axPos(4)/2;
                 ybuts = obj.splitYButtons{idx};
+                small_gap = 30*obj.DEFS.PADDING;
+                ybut_left = axLeft - obj.DEFS.BUTTONSIZE - small_gap;
                 for j = 1:numel(ybuts)
                     if isgraphics(ybuts(j))
-                        set(ybuts(j), 'Position', max(1, [colLeft, ...
+                        set(ybuts(j), 'Position', max(1, [ybut_left, ...
                             midY + (j-numel(ybuts)/2-1)*obj.DEFS.BUTTONSIZE, ...
                             obj.DEFS.BUTTONSIZE, obj.DEFS.BUTTONSIZE]));
                     end
@@ -898,10 +903,12 @@ classdef DataAcquisition < handle
                 % x buttons below each axis
                 midX = axPos(1) + axPos(3)/2;
                 xbuts = obj.splitXButtons{idx};
+                small_gap = obj.DEFS.PADDING;
+                xbut_bottom = axBottom - obj.DEFS.BUTTONSIZE - small_gap;
                 for j = 1:numel(xbuts)
                     if isgraphics(xbuts(j))
                         set(xbuts(j), 'Position', max(1, [midX + (j-numel(xbuts)/2-1)*obj.DEFS.BUTTONSIZE, ...
-                            segmentBottom, obj.DEFS.BUTTONSIZE, obj.DEFS.BUTTONSIZE]));
+                            xbut_bottom, obj.DEFS.BUTTONSIZE, obj.DEFS.BUTTONSIZE]));
                     end
                 end
             end
