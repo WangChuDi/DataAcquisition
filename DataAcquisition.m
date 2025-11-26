@@ -509,9 +509,11 @@ classdef DataAcquisition < handle
                 'callback', @(~,~) obj.fig_cache.scroll_y('down'));
             obj.ybuts(3) = uicontrol('Parent', obj.panel, 'String', resetLabel,...
                 'callback', @(~,~) obj.fig_cache.reset_fig);
-            obj.ybuts(4) = uicontrol('Parent', obj.panel, 'String', scrollUpLabel,...
+            obj.ybuts(4) = uicontrol('Parent', obj.panel, 'String', 'M',...
+                'callback', @(~,~) obj.fig_cache.auto_mid);
+            obj.ybuts(5) = uicontrol('Parent', obj.panel, 'String', scrollUpLabel,...
                 'callback', @(~,~) obj.fig_cache.scroll_y('up'));
-            obj.ybuts(5) = uicontrol('Parent', obj.panel, 'String', zoomInLabel,...
+            obj.ybuts(6) = uicontrol('Parent', obj.panel, 'String', zoomInLabel,...
                 'callback', @(~,~) obj.fig_cache.zoom_y('in'));
 
             % x-axis
@@ -833,9 +835,11 @@ classdef DataAcquisition < handle
                 'callback', @(~,~) cache.scroll_y('down'));
             ybuts(3) = uicontrol('Parent', obj.panel, 'String', resetLabel,...
                 'callback', @(~,~) cache.reset_fig);
-            ybuts(4) = uicontrol('Parent', obj.panel, 'String', scrollUpLabel,...
+            ybuts(4) = uicontrol('Parent', obj.panel, 'String', 'M',...
+                'callback', @(~,~) cache.auto_mid);
+            ybuts(5) = uicontrol('Parent', obj.panel, 'String', scrollUpLabel,...
                 'callback', @(~,~) cache.scroll_y('up'));
-            ybuts(5) = uicontrol('Parent', obj.panel, 'String', zoomInLabel,...
+            ybuts(6) = uicontrol('Parent', obj.panel, 'String', zoomInLabel,...
                 'callback', @(~,~) cache.zoom_y('in'));
 
             xbuts = [];
@@ -858,16 +862,25 @@ classdef DataAcquisition < handle
             heightAvail = panelPos(4) - bottomBase - obj.DEFS.BIGBUTTONSIZE - 3*obj.DEFS.PADDING;
 
             nAxes = numel(obj.subplotAxes);
-            segmentHeight = heightAvail / nAxes;
+            nCols = ceil(sqrt(nAxes));
+            nRows = ceil(nAxes / nCols);
+
+            segmentHeight = (heightAvail - obj.DEFS.PADDING * (nRows - 1)) / nRows;
+            segmentWidth = (width - obj.DEFS.PADDING * (nCols - 1)) / nCols;
 
             for idx = 1:nAxes
                 if ~isgraphics(obj.subplotAxes(idx))
                     continue;
                 end
-                segmentBottom = bottomBase + (nAxes - idx) * segmentHeight;
+                rowIdx = ceil(idx / nCols);
+                colIdx = mod(idx-1, nCols) + 1;
+
+                segmentBottom = bottomBase + (nRows - rowIdx) * (segmentHeight + obj.DEFS.PADDING);
+                colLeft = left + (colIdx - 1) * (segmentWidth + obj.DEFS.PADDING);
+
                 axHeight = max(1, segmentHeight - obj.DEFS.BUTTONSIZE - obj.DEFS.PADDING);
-                axPos = [left, segmentBottom + obj.DEFS.BUTTONSIZE, ...
-                    width - obj.DEFS.BUTTONSIZE, axHeight];
+                axPos = [colLeft + obj.DEFS.BUTTONSIZE, segmentBottom + obj.DEFS.BUTTONSIZE, ...
+                    segmentWidth - obj.DEFS.BUTTONSIZE, axHeight];
 
                 set(obj.subplotAxes(idx), 'Position', max(1, axPos), 'Units', 'Pixels');
 
@@ -876,7 +889,7 @@ classdef DataAcquisition < handle
                 ybuts = obj.splitYButtons{idx};
                 for j = 1:numel(ybuts)
                     if isgraphics(ybuts(j))
-                        set(ybuts(j), 'Position', max(1, [obj.DEFS.PADDING, ...
+                        set(ybuts(j), 'Position', max(1, [colLeft, ...
                             midY + (j-numel(ybuts)/2-1)*obj.DEFS.BUTTONSIZE, ...
                             obj.DEFS.BUTTONSIZE, obj.DEFS.BUTTONSIZE]));
                     end
@@ -3750,11 +3763,15 @@ classdef DataAcquisition < handle
             
             set(obj.chbuts(lowIdx), 'UserData', lowData);
             set(obj.chbuts(highIdx), 'UserData', highData);
-            
+
             fprintf('UserData updated for both channels\n');
-            
+
             % Update sampling rate
             obj.updateChannelsAndSampling();
+
+            % Refresh display state so split view and caches match the
+            % updated differential visibility settings.
+            obj.updateChannelDisplay();
             fprintf('=== toggleDifferentialPair completed ===\n\n');
         end
 

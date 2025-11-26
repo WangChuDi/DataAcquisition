@@ -167,6 +167,25 @@ classdef figure_cache < handle
                 display('Trouble scrolling.');
             end
         end
+
+        function auto_mid(obj)
+            % center the current plot vertically without changing range
+            try
+                finiteVals = obj.ydata(~isnan(obj.ydata));
+                if isempty(finiteVals)
+                    return;
+                end
+
+                curLim = get(obj.ax, 'YLim');
+                halfRange = diff(curLim)/2;
+
+                % Use the midpoint of the visible data range as the new center
+                dataCenter = (min(finiteVals) + max(finiteVals)) / 2;
+                obj.ax.YLim = [dataCenter - halfRange, dataCenter + halfRange];
+            catch ex
+                display('Trouble centering plot.');
+            end
+        end
         
     end
     
