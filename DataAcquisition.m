@@ -95,6 +95,10 @@ classdef DataAcquisition < handle
         subplotCaches = {}          % figure_cache objects for split axes
         splitYButtons = {}          % Y-axis button handles for split axes
         splitXButtons = {}          % X-axis button handles for split axes
+        splitOscilloscopes = {}     % OscilloscopeWindow objects for split view
+
+        % Encapsulated oscilloscope view for the main axes
+        mainOscilloscope  % OscilloscopeWindow for primary display
 
         % Cached main-axis styling
         mainAxesColor = []
@@ -465,9 +469,6 @@ classdef DataAcquisition < handle
                 set(obj.splitButton, 'Value', 0);
             end
 
-            % Initialize figure cache with all 8 channels
-            obj.fig_cache = figure_cache(obj.axes, obj.alpha, 5);
-            
             % Set initial channel visibility based on enabled state
             obj.updateChannelDisplay();
 
@@ -480,48 +481,15 @@ classdef DataAcquisition < handle
             delete(obj.panel);
             obj.panel = uipanel('Parent',obj.fig,'Position',[0 0 1 1]);
 
-            delete(obj.axes);
-            obj.axes = axes('Parent',obj.panel,'Position',[0.05 0.05 0.9 0.9],...
-                'GridLineStyle','-','XColor', 0.15*[1 1 1],'YColor', 0.15*[1 1 1]);
-            set(obj.axes,'NextPlot','add','XLimMode','manual');
-            set(obj.axes,'XGrid','on','YGrid','on','Tag','Axes','Box','on');
-            obj.axes.XLim = [0 5];
-            obj.axes.YLim = [-1 1];
-            obj.axes.YLabel.String = 'Current (pA)';
-            obj.axes.YLabel.Color = 'k';
-            obj.axes.XLabel.String = 'Time (s)';
-            obj.axes.XLabel.Color = 'k';
+            if ~isempty(obj.mainOscilloscope) && isvalid(obj.mainOscilloscope)
+                delete(obj.mainOscilloscope);
+            end
 
-            % now make the buttons
-
-            % Use plain-text labels instead of HTML for MATLAB UI compatibility
-            zoomOutLabel = '-';
-            scrollDownLabel = char(8595); % down arrow
-            resetLabel = 'R';
-            scrollUpLabel = char(8593);   % up arrow
-            zoomInLabel = '+';
-
-            % y-axis
-            obj.ybuts = [];
-            obj.ybuts(1) = uicontrol('Parent', obj.panel, 'String', zoomOutLabel,...
-                'callback', @(~,~) obj.fig_cache.zoom_y('out'));
-            obj.ybuts(2) = uicontrol('Parent', obj.panel, 'String', scrollDownLabel,...
-                'callback', @(~,~) obj.fig_cache.scroll_y('down'));
-            obj.ybuts(3) = uicontrol('Parent', obj.panel, 'String', resetLabel,...
-                'callback', @(~,~) obj.fig_cache.reset_fig);
-            obj.ybuts(4) = uicontrol('Parent', obj.panel, 'String', 'M',...
-                'callback', @(~,~) obj.fig_cache.auto_mid);
-            obj.ybuts(5) = uicontrol('Parent', obj.panel, 'String', scrollUpLabel,...
-                'callback', @(~,~) obj.fig_cache.scroll_y('up'));
-            obj.ybuts(6) = uicontrol('Parent', obj.panel, 'String', zoomInLabel,...
-                'callback', @(~,~) obj.fig_cache.zoom_y('in'));
-
-            % x-axis
-            obj.xbuts = [];
-            obj.xbuts(1) = uicontrol('Parent', obj.panel, 'String', zoomOutLabel,...
-                'callback', @(~,~) obj.fig_cache.zoom_x('out'));
-            obj.xbuts(2) = uicontrol('Parent', obj.panel, 'String', zoomInLabel,...
-                'callback', @(~,~) obj.fig_cache.zoom_x('in'));
+            obj.mainOscilloscope = OscilloscopeWindow(obj.panel, obj.alpha, 5, [0.05 0.05 0.9 0.9]);
+            obj.axes = obj.mainOscilloscope.Axes;
+            obj.fig_cache = obj.mainOscilloscope.Cache;
+            obj.ybuts = obj.mainOscilloscope.YButtons;
+            obj.xbuts = obj.mainOscilloscope.XButtons;
 
             % split view toggle
             obj.splitButton = uicontrol('Parent', obj.panel, 'Style', 'togglebutton', ...
@@ -771,6 +739,7 @@ classdef DataAcquisition < handle
             obj.subplotCaches = cell(1, nAxes);
             obj.splitYButtons = cell(1, nAxes);
             obj.splitXButtons = cell(1, nAxes);
+            obj.splitOscilloscopes = cell(1, nAxes);
 
             xMaxForSplit = 5;
             if ~isempty(obj.fig_cache)
@@ -784,21 +753,12 @@ classdef DataAcquisition < handle
             end
 
             for idx = 1:nAxes
-                ax = axes('Parent', obj.panel, 'GridLineStyle','-', ...
-                    'XColor', 0.15*[1 1 1],'YColor', 0.15*[1 1 1]);
-                set(ax,'NextPlot','add','XLimMode','manual');
-                set(ax,'XGrid','on','YGrid','on','Tag','Axes','Box','on');
-                ax.XLabel.String = 'Time (s)';
-                ax.XLabel.Color = 'k';
-                ax.YLabel.String = sprintf('CH%d', visibleChannels(idx)-1);
-                ax.YLabel.Color = 'k';
-                ax.XLim = obj.axes.XLim;
-                ax.YLim = obj.axes.YLim;
-
-                obj.subplotAxes(idx) = ax;
-
                 chAlpha = obj.alpha(visibleChannels(idx));
-                chCache = figure_cache(ax, chAlpha, xMaxForSplit);
+                osc = OscilloscopeWindow(obj.panel, chAlpha, xMaxForSplit, [0.05 0.05 0.9 0.9], ...
+                    'YLabel', sprintf('CH%d', visibleChannels(idx)-1));
+                osc.Axes.XLim = obj.axes.XLim;
+                osc.Axes.YLim = obj.axes.YLim;
+                chCache = osc.Cache;
                 chBut = obj.chbuts(visibleChannels(idx));
                 chData = get(chBut, 'UserData');
                 if ~isempty(chData) && isfield(chData, 'isDifferential') && chData.isDifferential
@@ -809,8 +769,10 @@ classdef DataAcquisition < handle
                 chCache.cmap = chColor;
                 chCache.channelVisible = true(1,1);
                 obj.subplotCaches{idx} = chCache;
-
-                [obj.splitYButtons{idx}, obj.splitXButtons{idx}] = obj.createAxisButtons(chCache);
+                obj.subplotAxes(idx) = osc.Axes;
+                obj.splitYButtons{idx} = osc.YButtons;
+                obj.splitXButtons{idx} = osc.XButtons;
+                obj.splitOscilloscopes{idx} = osc;
             end
 
             if isgraphics(obj.axes)
@@ -820,34 +782,6 @@ classdef DataAcquisition < handle
             obj.layoutSplitAxes();
         end
 
-        function [ybuts, xbuts] = createAxisButtons(obj, cache)
-            % Use plain-text labels instead of HTML for MATLAB UI compatibility
-            zoomOutLabel = '-';
-            scrollDownLabel = char(8595); % down arrow
-            resetLabel = 'R';
-            scrollUpLabel = char(8593);   % up arrow
-            zoomInLabel = '+';
-
-            ybuts = [];
-            ybuts(1) = uicontrol('Parent', obj.panel, 'String', zoomOutLabel,...
-                'callback', @(~,~) cache.zoom_y('out'));
-            ybuts(2) = uicontrol('Parent', obj.panel, 'String', scrollDownLabel,...
-                'callback', @(~,~) cache.scroll_y('down'));
-            ybuts(3) = uicontrol('Parent', obj.panel, 'String', resetLabel,...
-                'callback', @(~,~) cache.reset_fig);
-            ybuts(4) = uicontrol('Parent', obj.panel, 'String', 'M',...
-                'callback', @(~,~) cache.auto_mid);
-            ybuts(5) = uicontrol('Parent', obj.panel, 'String', scrollUpLabel,...
-                'callback', @(~,~) cache.scroll_y('up'));
-            ybuts(6) = uicontrol('Parent', obj.panel, 'String', zoomInLabel,...
-                'callback', @(~,~) cache.zoom_y('in'));
-
-            xbuts = [];
-            xbuts(1) = uicontrol('Parent', obj.panel, 'String', zoomOutLabel,...
-                'callback', @(~,~) cache.zoom_x('out'));
-            xbuts(2) = uicontrol('Parent', obj.panel, 'String', zoomInLabel,...
-                'callback', @(~,~) cache.zoom_x('in'));
-        end
 
         function layoutSplitAxes(obj)
             if isempty(obj.subplotAxes) || ~all(isgraphics(obj.subplotAxes))
@@ -943,6 +877,13 @@ classdef DataAcquisition < handle
 
         function clearSplitView(obj)
             % Delete split axes and controls
+            for idx = 1:numel(obj.splitOscilloscopes)
+                osc = obj.splitOscilloscopes{idx};
+                if isa(osc, 'OscilloscopeWindow') && isvalid(osc)
+                    delete(osc);
+                end
+            end
+
             if ~isempty(obj.subplotAxes)
                 delete(obj.subplotAxes(isgraphics(obj.subplotAxes)));
             end
@@ -957,6 +898,7 @@ classdef DataAcquisition < handle
             obj.subplotCaches = {};
             obj.splitYButtons = {};
             obj.splitXButtons = {};
+            obj.splitOscilloscopes = {};
         end
 
         function setMainAxisControlsVisible(obj, visibility)
